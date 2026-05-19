@@ -3,6 +3,7 @@ import { env } from './config/env'
 import { logger } from './config/logger'
 import { connectDatabase } from './config/database'
 import { runMigrations } from './models/lead'
+import { startFollowupJob } from './services/followupJob'
 
 async function start(): Promise<void> {
   try {
@@ -23,6 +24,8 @@ async function start(): Promise<void> {
         health: `http://localhost:${env.port}/health`,
       })
     })
+
+    startFollowupJob()
 
     process.on('SIGTERM', () => {
       logger.info('SIGTERM recebido. Encerrando graciosamente...')

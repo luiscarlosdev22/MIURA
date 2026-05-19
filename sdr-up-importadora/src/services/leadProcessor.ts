@@ -1,30 +1,13 @@
-import { findOrCreateLead, updateLead } from '../models/lead'
+import { buildHandoffBriefing, buildNewLeadNotification } from './handoffBriefing'
+import { detectFollowupReason } from './followupDetector'
+import { findOrCreateLead, updateLead, Lead } from '../models/lead'
 import { saveMessage, getHistory } from '../models/conversation'
 import { generateSDRResponse, classifyLead } from './ai'
 import { sendTextMessage } from './whatsapp'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 
-const HANDOFF_MARKERS = [
-  'vou passar agora pro nosso comercial',
-  'vou passar pro nosso comercial',
-  'vou passar essas informações pro nosso comercial',
-  'vou passar essas informações para nosso comercial',
-  'vou passar para o nosso comercial',
-  'vou passar pro comercial',
-  'vou passar para o comercial',
-  'vou já te conectar',
-  'vou ja te conectar',
-  'vou te conectar com nosso comercial',
-  'vou já te conectar com nosso comercial',
-  'vou ja te conectar com nosso comercial',
-  'vou te conectar com o comercial',
-  'vou encaminhar para nossa equipe',
-  'vou encaminhar pra nossa equipe',
-  'vou encaminhar essas informações',
-  'vou repassar pro nosso comercial',
-  'vou repassar para o nosso comercial',
-]
+const HANDOFF_REGEX = /\b(vou|passo|encaminho|encaminhar|repasso|repassar|passar|conectar|conectando|conecto)\b[^.!?]{0,80}\b(comercial|vendedor|equipe|nosso time|atendimento humano)\b/i
 
 const FOLLOWUP_MARKERS = [
   'vou simular pra voce',
@@ -35,8 +18,7 @@ const FOLLOWUP_MARKERS = [
 ]
 
 function containsHandoffMarker(text: string): boolean {
-  const lower = text.toLowerCase()
-  return HANDOFF_MARKERS.some(marker => lower.includes(marker))
+  return HANDOFF_REGEX.test(text)
 }
 
 function containsFollowupMarker(text: string): boolean {
@@ -56,6 +38,18 @@ export async function processIncomingMessage(
 
   const lead = await findOrCreateLead(phone, name ?? undefined)
 
+  // Notifica vendedor quando lead é recém-criado (criado nos últimos 5 segundos)
+  const isNewLead = lead.created_at && (Date.now() - new Date(lead.created_at).getTime()) < 5000
+  if (isNewLead && env.seller.whatsapp) {
+    try {
+      const notif = buildNewLeadNotification(phone, lead.name, text)
+      await sendTextMessage(env.seller.whatsapp, notif)
+      logger.info(`Vendedor notificado sobre novo lead: ${phone}`)
+    } catch (err) {
+      logger.error(`Erro ao notificar novo lead ${phone}`, { error: (err as Error).message })
+    }
+  }
+
   if (lead.seller_notified) {
     await saveMessage(phone, 'user', text)
     logger.info(`Lead ${phone} ja esta com humano. SDR silenciado.`)
@@ -71,6 +65,27 @@ export async function processIncomingMessage(
     await saveMessage(phone, 'assistant', reply)
     await sendTextMessage(phone, reply)
     return
+  }
+
+  // Detecta se a mensagem do usuário indica que ele vai sumir temporariamente
+  const followupReason = detectFollowupReason(text)
+  if (followupReason && !lead.seller_notified) {
+    const followupAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    await updateLead(phone, {
+      followup_at: followupAt,
+      followup_reason: followupReason,
+      followup_count: 0,
+    })
+    logger.info(`Follow-up agendado para ${phone}`, { reason: followupReason, at: followupAt })
+  }
+
+  // Se o lead voltou a falar e tinha follow-up pendente, cancela
+  if (lead.followup_at && !followupReason) {
+    await updateLead(phone, {
+      followup_at: null,
+      followup_reason: null,
+    })
+    logger.info(`Follow-up cancelado para ${phone} (lead voltou a conversar)`)
   }
 
   const history = await getHistory(phone, 10)
@@ -94,7 +109,7 @@ export async function processIncomingMessage(
     logger.info(`Hand-off detectado na resposta da Julia para ${phone}`)
     await updateLead(phone, { status: 'QUENTE' })
     if (!lead.seller_notified && env.seller.whatsapp) {
-      await notifySeller(phone, lead.name)
+      await notifySeller(phone, lead)
       await updateLead(phone, { seller_notified: true })
     }
     return
@@ -119,15 +134,8 @@ export async function processIncomingMessage(
   }
 }
 
-async function notifySeller(leadPhone: string, leadName: string | null): Promise<void> {
-  const name = leadName ?? 'Sem nome'
-  const message =
-    `LEAD QUENTE DETECTADO!\n\n` +
-    `Nome: ${name}\n` +
-    `Telefone: ${leadPhone}\n\n` +
-    `Esse lead demonstrou interesse real de compra.\n` +
-    `Entre em contato agora!`
-
-  await sendTextMessage(env.seller.whatsapp, message)
+async function notifySeller(leadPhone: string, lead: Lead): Promise<void> {
+  const briefingMsg = await buildHandoffBriefing(leadPhone, lead)
+  await sendTextMessage(env.seller.whatsapp, briefingMsg)
   logger.info(`Vendedor notificado sobre lead quente: ${leadPhone}`)
 }

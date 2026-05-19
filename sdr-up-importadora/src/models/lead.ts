@@ -18,6 +18,10 @@ export interface Lead {
   source: string
   seller_notified: boolean
   awaiting_followup_at: Date | null
+  followup_at: Date | null
+  followup_reason: 'socio' | 'pensar' | 'pagamento' | null
+  followup_count: number
+  followup_sent_at: Date | null
   created_at: Date
   updated_at: Date
 }
@@ -57,6 +61,13 @@ export async function runMigrations(): Promise<void> {
   `)
   await query(`
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS awaiting_followup_at TIMESTAMPTZ
+  `)
+  await query(`
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS followup_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS followup_reason TEXT,
+      ADD COLUMN IF NOT EXISTS followup_count INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS followup_sent_at TIMESTAMPTZ
   `)
   logger.info('Migrations executadas com sucesso')
 }

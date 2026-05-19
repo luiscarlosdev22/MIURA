@@ -95,3 +95,20 @@ export async function buildHandoffBriefing(phone: string, lead: Lead): Promise<s
 
   return mensagem
 }
+
+export function buildNewLeadNotification(phone: string, name: string | null, firstMessage: string): string {
+  const nome = name ?? 'Lead sem nome'
+  const now = new Date()
+  const horaBr = now.toLocaleString('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  let preview = firstMessage.trim()
+  if (preview.length > 80) preview = preview.substring(0, 77) + '...'
+
+  return `🆕 NOVO LEAD — ${nome}\n📞 ${phone}\n💬 "${preview}"\n🕒 ${horaBr}`
+}

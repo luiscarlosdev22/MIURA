@@ -3,6 +3,8 @@ import { env } from '../config/env'
 import { logger } from '../config/logger'
 import { processIncomingMessage } from '../services/leadProcessor'
 import { markAsRead } from '../services/whatsapp'
+import { downloadAudioFromEvolution } from '../services/mediaDownloader'
+import { transcribeAudio } from '../services/transcribeAudio'
 
 export async function verifyWebhook(req: Request, res: Response): Promise<void> {
   const mode = req.query['hub.mode'] as string
@@ -86,11 +88,41 @@ export async function receiveEvolutionWebhook(req: Request, res: Response): Prom
 
   const pushName: string | undefined = data.pushName ?? undefined
 
-  const mediaTypes = ['audioMessage', 'imageMessage', 'videoMessage', 'documentMessage']
-  if (mediaTypes.includes(data.messageType)) {
+  const nonAudioMedia = ['imageMessage', 'videoMessage', 'documentMessage']
+  if (nonAudioMedia.includes(data.messageType)) {
     processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName).catch(err => {
       logger.error(`Erro ao processar midia Evolution de ${phone}`, { error: err.message })
     })
+    return
+  }
+
+  if (data.messageType === 'audioMessage' || data.messageType === 'pttMessage') {
+    const handleAudio = async () => {
+      try {
+        const { filePath, durationSeconds } = await downloadAudioFromEvolution(data)
+
+        if (durationSeconds > 60) {
+          logger.info(`Audio longo (${durationSeconds}s) de ${phone} — passando pro humano`)
+          await processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
+          return
+        }
+
+        const transcription = await transcribeAudio(filePath)
+
+        if (!transcription) {
+          await processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
+          return
+        }
+
+        logger.info(`Audio transcrito de ${phone}`, { preview: transcription.slice(0, 60) })
+        await processIncomingMessage(phone, transcription, pushName)
+      } catch (err) {
+        logger.error(`Erro ao processar audio de ${phone}`, { error: (err as Error).message })
+        processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName).catch(() => {})
+      }
+    }
+
+    handleAudio()
     return
   }
 
