@@ -6,8 +6,14 @@ import { runMigrations } from './models/lead'
 
 async function start(): Promise<void> {
   try {
-   // await connectDatabase()
-   // await runMigrations()
+    await connectDatabase()
+    try {
+      await runMigrations()
+      logger.info('Tabelas verificadas/criadas com sucesso')
+    } catch (migrationError) {
+      logger.error('Falha ao executar migrations', { error: migrationError })
+      throw migrationError
+    }
 
     const server = app.listen(env.port, () => {
       logger.info(`SDR UP Importadora rodando`, {
@@ -26,7 +32,11 @@ async function start(): Promise<void> {
       })
     })
   } catch (error) {
-    logger.error('Falha ao iniciar servidor', { error })
+    logger.error('Falha ao iniciar servidor', {
+      message: (error as Error)?.message,
+      code: (error as any)?.code,
+      stack: (error as Error)?.stack,
+    })
     process.exit(1)
   }
 }

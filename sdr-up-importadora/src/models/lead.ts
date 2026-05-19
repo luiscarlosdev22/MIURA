@@ -17,6 +17,7 @@ export interface Lead {
   decides_alone: boolean | null
   source: string
   seller_notified: boolean
+  awaiting_followup_at: Date | null
   created_at: Date
   updated_at: Date
 }
@@ -54,15 +55,18 @@ export async function runMigrations(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_conversations_phone
     ON conversations(phone, created_at DESC)
   `)
+  await query(`
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS awaiting_followup_at TIMESTAMPTZ
+  `)
   logger.info('Migrations executadas com sucesso')
 }
 
-export async function findOrCreateLead(phone: string): Promise<Lead> {
+export async function findOrCreateLead(phone: string, name?: string): Promise<Lead> {
   const rows = await query<Lead>('SELECT * FROM leads WHERE phone = $1', [phone])
   if (rows.length > 0) return rows[0]
   const created = await query<Lead>(
-    'INSERT INTO leads (phone) VALUES ($1) RETURNING *',
-    [phone]
+    'INSERT INTO leads (phone, name) VALUES ($1, $2) RETURNING *',
+    [phone, name ?? null]
   )
   logger.info(`Novo lead criado: ${phone}`)
   return created[0]

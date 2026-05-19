@@ -12,10 +12,15 @@ export interface ChatMessage {
 
 export async function generateSDRResponse(
   history: ChatMessage[],
-  newMessage: string
+  newMessage: string,
+  leadName: string | null
 ): Promise<string> {
+  const contextNote = leadName
+    ? `Contexto da conversa atual: o nome do lead é "${leadName}". Use esse nome naturalmente quando for cumprimentar ou se referir a ele.`
+    : `Contexto: o nome do lead ainda não é conhecido. Pergunte naturalmente.`
+
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: SDR_SYSTEM_PROMPT },
+    { role: 'system', content: `${contextNote}\n\n${SDR_SYSTEM_PROMPT}` },
     ...history.slice(-10),
     { role: 'user', content: newMessage },
   ]
@@ -23,16 +28,20 @@ export async function generateSDRResponse(
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages,
-    max_tokens: 200,
+    max_tokens: 400,
     temperature: 0.7,
   })
 
   const reply = completion.choices[0]?.message?.content
   if (!reply) throw new Error('GPT nao retornou resposta')
 
+  const promptTokens = completion.usage?.prompt_tokens ?? 0
+  const completionTokens = completion.usage?.completion_tokens ?? 0
+  const cost = promptTokens * 0.00000015 + completionTokens * 0.0000006
   logger.debug('GPT respondeu', {
-    tokens: completion.usage?.total_tokens,
-    cost: `~$${((completion.usage?.total_tokens ?? 0) * 0.0000006).toFixed(6)}`,
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    cost: `~$${cost.toFixed(6)}`,
   })
 
   return reply.trim()

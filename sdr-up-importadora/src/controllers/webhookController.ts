@@ -50,8 +50,65 @@ export async function receiveWebhook(req: Request, res: Response): Promise<void>
 
   await markAsRead(messageId)
 
-  processIncomingMessage(phone, text).catch(err => {
+  processIncomingMessage(phone, text, contactName ?? undefined).catch(err => {
     logger.error(`Erro ao processar mensagem de ${phone}`, { error: err.message })
+  })
+}
+
+export async function receiveEvolutionWebhook(req: Request, res: Response): Promise<void> {
+  res.status(200).json({ ok: true })
+
+  const body = req.body
+  const event: string = body?.event ?? ''
+  const data = body?.data
+
+  logger.info(`Evolution webhook recebido: ${event}`, { instance: body?.instance })
+
+  if (event !== 'messages.upsert') return
+  if (!data || data.key?.fromMe === true) return
+
+  const remoteJid: string = data.key?.remoteJid ?? ''
+  const isGroup = remoteJid.endsWith('@g.us')
+
+  if (isGroup) return
+
+  const phone = remoteJid.split('@')[0]
+
+  if (!phone) {
+    logger.warn('Evolution: remoteJid invalido', { remoteJid })
+    return
+  }
+
+  if (env.allowedNumbers.length > 0 && !env.allowedNumbers.includes(phone)) {
+    logger.info(`Mensagem ignorada (numero nao autorizado): ${phone}`)
+    return
+  }
+
+  const pushName: string | undefined = data.pushName ?? undefined
+
+  const mediaTypes = ['audioMessage', 'imageMessage', 'videoMessage', 'documentMessage']
+  if (mediaTypes.includes(data.messageType)) {
+    processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName).catch(err => {
+      logger.error(`Erro ao processar midia Evolution de ${phone}`, { error: err.message })
+    })
+    return
+  }
+
+  const text: string =
+    data.message?.conversation ?? data.message?.extendedTextMessage?.text ?? ''
+
+  if (!text) {
+    logger.warn('Evolution: mensagem sem texto', { remoteJid, messageType: data.messageType })
+    return
+  }
+
+  logger.info(`Nova mensagem via Evolution de ${phone}`, {
+    name: data.pushName,
+    preview: text.slice(0, 60),
+  })
+
+  processIncomingMessage(phone, text, pushName).catch(err => {
+    logger.error(`Erro ao processar mensagem Evolution de ${phone}`, { error: err.message })
   })
 }
 
