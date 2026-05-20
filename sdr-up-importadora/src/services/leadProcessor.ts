@@ -3,7 +3,8 @@ import { detectFollowupReason } from './followupDetector'
 import { findOrCreateLead, updateLead, Lead } from '../models/lead'
 import { saveMessage, getHistory } from '../models/conversation'
 import { generateSDRResponse, classifyLead } from './ai'
-import { sendTextMessage } from './whatsapp'
+import { sendTextMessage, sendAudio } from './whatsapp'
+import { isTechnicalRequest } from './technicalRequestDetector'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 
@@ -86,6 +87,23 @@ export async function processIncomingMessage(
       followup_reason: null,
     })
     logger.info(`Follow-up cancelado para ${phone} (lead voltou a conversar)`)
+  }
+
+  // Pedido técnico → envia áudio pré-gravado, sem chamar GPT
+  if (isTechnicalRequest(text)) {
+    await saveMessage(phone, 'user', text)
+    try {
+      logger.info(`Pedido técnico detectado de ${phone}, enviando áudio`)
+      await sendAudio(phone, env.audio.pitchTecnico)
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      const followupText = 'Aí está rapidinho 👊 Qualquer dúvida me chama!'
+      await sendTextMessage(phone, followupText)
+      await saveMessage(phone, 'assistant', '[ÁUDIO_PITCH_TECNICO_ENVIADO] ' + followupText)
+      return
+    } catch (err) {
+      logger.error(`Erro ao enviar áudio técnico para ${phone}`, { error: (err as Error).message })
+      // Falhou — continua fluxo normal (Julia responde por texto)
+    }
   }
 
   const history = await getHistory(phone, 10)

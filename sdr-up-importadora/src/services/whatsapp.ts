@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { readFile } from 'fs/promises'
 import { env } from '../config/env'
 import { logger } from '../config/logger'
 
@@ -63,6 +64,35 @@ async function sendMetaText(to: string, text: string): Promise<void> {
       })
     }
     throw error
+  }
+}
+
+export async function sendAudio(phone: string, filepath: string): Promise<void> {
+  if (env.whatsappProvider !== 'evolution') {
+    logger.warn('sendAudio só funciona com Evolution provider hoje')
+    return
+  }
+
+  try {
+    const fileBuffer = await readFile(filepath)
+    const base64 = fileBuffer.toString('base64')
+
+    await axios.post(
+      `${env.evolution.url}/message/sendWhatsAppAudio/${env.evolution.instance}`,
+      { number: phone, audio: base64 },
+      {
+        headers: { apikey: env.evolution.apiKey, 'Content-Type': 'application/json' },
+        timeout: 30_000,
+      }
+    )
+    logger.info(`Áudio enviado para ${phone}`)
+  } catch (err) {
+    const error = err as Error & { response?: { data?: unknown } }
+    logger.error(`Erro ao enviar áudio para ${phone}`, {
+      message: error.message,
+      response: (error as any).response?.data,
+    })
+    throw err
   }
 }
 

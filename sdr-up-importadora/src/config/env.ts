@@ -58,4 +58,7 @@ export const env = {
     .split(',')
     .map(n => n.trim())
     .filter(Boolean),
+  audio: {
+    pitchTecnico: optional('AUDIO_PITCH_TECNICO', '/Users/xiiina.com/julia-audios/pitch_tecnico.ogg'),
+  },
 }
