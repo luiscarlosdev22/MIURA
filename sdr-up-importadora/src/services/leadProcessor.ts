@@ -110,6 +110,11 @@ export async function processIncomingMessage(
     logger.info(`Follow-up cancelado para ${phone} (lead voltou a conversar)`)
   }
 
+  // Busca histórico uma única vez — usado pelos detectores e pelo GPT
+  const history = await getHistory(phone, 10)
+  const recentMessages = history.map(m => m.content)
+  const jaCumprimentou = history.some(m => m.role === 'assistant')
+
   // Pedido técnico → envia áudio pré-gravado, sem chamar GPT
   if (isTechnicalRequest(textoFinal)) {
     await saveMessage(phone, 'user', textoFinal)
@@ -135,19 +140,20 @@ export async function processIncomingMessage(
   }
 
   // Pedido de preço → fluxo controlado com pausa de 30s antes da proposta
-  if (isPriceRequest(textoFinal)) {
+  if (isPriceRequest(textoFinal, recentMessages)) {
     await saveMessage(phone, 'user', textoFinal)
     try {
       logger.info(`Pedido de preço detectado de ${phone}, enviando fluxo controlado`)
 
       const nomeExibicao = lead.name ?? 'tudo bem'
 
-      // 1. Cumprimento
-      const cumprimento = `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA 👊`
-      await sendTextMessage(phone, cumprimento)
-      await saveMessage(phone, 'assistant', cumprimento)
-
-      await new Promise(resolve => setTimeout(resolve, 1500))
+      // 1. Cumprimento — só na primeira vez que Julia fala com o lead
+      if (!jaCumprimentou) {
+        const cumprimento = `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA 👊`
+        await sendTextMessage(phone, cumprimento)
+        await saveMessage(phone, 'assistant', cumprimento)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+      }
 
       // 2. Anúncio dos vídeos
       const anuncio = 'Te mando os vídeos da Miura trabalhando primeiro 👊'
@@ -232,7 +238,6 @@ Entrada de R$ 10.000 + saldo em 12x de R$ 1.658
     }
   }
 
-  const history = await getHistory(phone, 10)
   const reply = await generateSDRResponse(history, textoFinal, lead.name)
 
   await saveMessage(phone, 'user', textoFinal)
