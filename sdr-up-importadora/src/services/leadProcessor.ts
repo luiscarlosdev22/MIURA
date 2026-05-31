@@ -5,6 +5,7 @@ import { saveMessage, getHistory } from '../models/conversation'
 import { generateSDRResponse, classifyLead } from './ai'
 import { sendTextMessage, sendAudio } from './whatsapp'
 import { isTechnicalRequest } from './technicalRequestDetector'
+import { isPriceRequest } from './priceRequestDetector'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 
@@ -25,6 +26,22 @@ function containsHandoffMarker(text: string): boolean {
 function containsFollowupMarker(text: string): boolean {
   const lower = text.toLowerCase()
   return FOLLOWUP_MARKERS.some(marker => lower.includes(marker))
+}
+
+function limparTemplateMeta(texto: string): string {
+  let t = texto
+  const padroes = [
+    /an[úu]ncio do facebook/gi,
+    /an[úu]ncio do instagram/gi,
+    /mostrar detalhes/gi,
+    /oi!?\s*como podemos ajudar\??/gi,
+    /clique para conversar/gi,
+    /enviado (do|pelo) (facebook|instagram)/gi,
+  ]
+  for (const p of padroes) {
+    t = t.replace(p, '')
+  }
+  return t.replace(/\n{2,}/g, '\n').trim()
 }
 
 export async function processIncomingMessage(
@@ -68,8 +85,12 @@ export async function processIncomingMessage(
     return
   }
 
+  // Remove cabeçalho automático que o Meta injeta em leads de anúncio
+  const textoLimpo = limparTemplateMeta(text)
+  const textoFinal = textoLimpo.length > 0 ? textoLimpo : 'oi'
+
   // Detecta se a mensagem do usuário indica que ele vai sumir temporariamente
-  const followupReason = detectFollowupReason(text)
+  const followupReason = detectFollowupReason(textoFinal)
   if (followupReason && !lead.seller_notified) {
     const followupAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
     await updateLead(phone, {
@@ -90,15 +111,22 @@ export async function processIncomingMessage(
   }
 
   // Pedido técnico → envia áudio pré-gravado, sem chamar GPT
-  if (isTechnicalRequest(text)) {
-    await saveMessage(phone, 'user', text)
+  if (isTechnicalRequest(textoFinal)) {
+    await saveMessage(phone, 'user', textoFinal)
     try {
       logger.info(`Pedido técnico detectado de ${phone}, enviando áudio`)
       await sendAudio(phone, env.audio.pitchTecnico)
       await new Promise(resolve => setTimeout(resolve, 1500))
-      const followupText = 'Aí está rapidinho 👊 Qualquer dúvida me chama!'
+      const followupText = 'Aí está rapidinho 👊 Te mando também a máquina trabalhando:'
       await sendTextMessage(phone, followupText)
-      await saveMessage(phone, 'assistant', '[ÁUDIO_PITCH_TECNICO_ENVIADO] ' + followupText)
+
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await sendTextMessage(phone, '🔧 Fazendo no próprio carro: https://youtube.com/shorts/DX-LsXkVvT8\n\n⚙️ Retífica na máquina: https://youtube.com/shorts/Vbr1BZAfo-Q')
+
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      await sendTextMessage(phone, 'Ela também faz tambor de freio e volante de embreagem. Quer que eu te mande esses também?')
+
+      await saveMessage(phone, 'assistant', '[ÁUDIO_PITCH + VÍDEOS ENVIADOS] ' + followupText)
       return
     } catch (err) {
       logger.error(`Erro ao enviar áudio técnico para ${phone}`, { error: (err as Error).message })
@@ -106,10 +134,108 @@ export async function processIncomingMessage(
     }
   }
 
-  const history = await getHistory(phone, 10)
-  const reply = await generateSDRResponse(history, text, lead.name)
+  // Pedido de preço → fluxo controlado com pausa de 30s antes da proposta
+  if (isPriceRequest(textoFinal)) {
+    await saveMessage(phone, 'user', textoFinal)
+    try {
+      logger.info(`Pedido de preço detectado de ${phone}, enviando fluxo controlado`)
 
-  await saveMessage(phone, 'user', text)
+      const nomeExibicao = lead.name ?? 'tudo bem'
+
+      // 1. Cumprimento
+      const cumprimento = `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA 👊`
+      await sendTextMessage(phone, cumprimento)
+      await saveMessage(phone, 'assistant', cumprimento)
+
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
+      // 2. Anúncio dos vídeos
+      const anuncio = 'Te mando os vídeos da Miura trabalhando primeiro 👊'
+      await sendTextMessage(phone, anuncio)
+      await saveMessage(phone, 'assistant', anuncio)
+
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
+      // 3. 4 vídeos agrupados em uma única mensagem
+      const videos = '🔧 Fazendo no próprio carro: https://youtube.com/shorts/DX-LsXkVvT8\n\n⚙️ Retífica na máquina: https://youtube.com/shorts/Vbr1BZAfo-Q\n\n🛞 Tambor de freio: https://youtube.com/shorts/873I3ZQKkqc\n\n🔩 Volante de embreagem: https://youtube.com/shorts/EwXbLf1fZEU'
+      await sendTextMessage(phone, videos)
+      await saveMessage(phone, 'assistant', videos)
+
+      // 4. Pausa de 30s para o lead ver os vídeos
+      logger.info(`Aguardando 30s antes de enviar proposta para ${phone}`)
+      await new Promise(resolve => setTimeout(resolve, 30000))
+
+      // 5. Proposta formatada completa
+      const proposta = `📋 *Proposta Comercial – Retífica de Disco Miura X433*
+
+*Equipamento:* Retífica de Disco Miura X433
+
+━━━━━━━━━━━━━━━
+
+💰 *Condições de Pagamento*
+
+✅ *Valor à Vista*
+R$ 27.900,00
+🔥 Condição especial no PIX
+
+━━━━━━━━━━━━━━━
+
+💳 *Cartão de Crédito*
+Em até 18x de R$ 1.869 (com as taxas da operadora)
+
+━━━━━━━━━━━━━━━
+
+🧾 *Boleto*
+Entrada de R$ 10.000 + saldo em 12x de R$ 1.658
+
+━━━━━━━━━━━━━━━
+
+✅ *Incluso*
+- Treinamento completo
+- Suporte técnico
+- Garantia de 3 anos
+- Equipamento profissional linha Miura
+
+━━━━━━━━━━━━━━━
+
+🚀 Somos referência no Brasil em retífica de disco automotiva.`
+
+      await sendTextMessage(phone, proposta)
+      await saveMessage(phone, 'assistant', proposta)
+
+      await new Promise(resolve => setTimeout(resolve, 1500))
+
+      // 6. Fecho
+      const fecho = 'Qualquer dúvida me chama 👊'
+      await sendTextMessage(phone, fecho)
+      await saveMessage(phone, 'assistant', fecho)
+
+      // 7. Agenda follow-up para o dia seguinte às 9h
+      try {
+        const tomorrow = new Date()
+        tomorrow.setDate(tomorrow.getDate() + 1)
+        tomorrow.setHours(9, 0, 0, 0)
+        await updateLead(phone, {
+          followup_at: tomorrow,
+          followup_reason: 'proposta_enviada',
+          followup_count: 0,
+        })
+        logger.info(`Follow-up de proposta agendado para ${phone}`, { at: tomorrow.toISOString() })
+      } catch (err) {
+        logger.error(`Erro ao agendar follow-up de proposta para ${phone}`, { error: (err as Error).message })
+      }
+
+      return
+    } catch (err) {
+      logger.error(`Erro no fluxo controlado de preço para ${phone}`, { error: (err as Error).message })
+      // Falhou — continua fluxo normal (GPT responde)
+    }
+  }
+
+  const history = await getHistory(phone, 10)
+  const reply = await generateSDRResponse(history, textoFinal, lead.name)
+
+  await saveMessage(phone, 'user', textoFinal)
 
   const parts = reply.split('[[SPLIT]]').map(p => p.trim()).filter(p => p.length > 0)
   const savedReply = parts.join('\n\n')
@@ -143,7 +269,7 @@ export async function processIncomingMessage(
   // Classificação de fundo (MORNO/FRIO apenas) — não notifica vendedor
   const userMessages = history.filter(m => m.role === 'user').length + 1
   if (userMessages % 4 === 0 || userMessages === 6) {
-    const updatedHistory = [...history, { role: 'user' as const, content: text }]
+    const updatedHistory = [...history, { role: 'user' as const, content: textoFinal }]
     const classification = await classifyLead(updatedHistory)
     logger.info(`Lead ${phone} classificado como: ${classification}`)
     if (classification !== 'QUENTE') {

@@ -1,4 +1,4 @@
-export type FollowupReason = 'socio' | 'pensar' | 'pagamento' | null
+export type FollowupReason = 'socio' | 'pensar' | 'pagamento' | 'proposta_enviada' | null
 
 export function detectFollowupReason(userMessage: string): FollowupReason {
   if (
@@ -33,6 +33,10 @@ export function detectFollowupReason(userMessage: string): FollowupReason {
 
 export function followupMessage(name: string | null, reason: FollowupReason, attempt: number): string {
   const nome = name ?? 'tudo bem'
+
+  if (reason === 'proposta_enviada') {
+    return `Oi ${nome}, conseguiu ver a proposta? Qualquer dúvida sobre valores ou condições me chama 👊`
+  }
 
   if (attempt === 1) {
     if (reason === 'socio') {

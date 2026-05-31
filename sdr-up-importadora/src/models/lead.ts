@@ -19,7 +19,7 @@ export interface Lead {
   seller_notified: boolean
   awaiting_followup_at: Date | null
   followup_at: Date | null
-  followup_reason: 'socio' | 'pensar' | 'pagamento' | null
+  followup_reason: 'socio' | 'pensar' | 'pagamento' | 'proposta_enviada' | null
   followup_count: number
   followup_sent_at: Date | null
   created_at: Date
