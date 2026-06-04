@@ -139,39 +139,78 @@ export async function processIncomingMessage(
     }
   }
 
-  // Pedido de preço → fluxo controlado com pausa de 30s antes da proposta
   if (isPriceRequest(textoFinal, recentMessages)) {
     await saveMessage(phone, 'user', textoFinal)
     try {
-      logger.info(`Pedido de preço detectado de ${phone}, enviando fluxo controlado`)
+      logger.info(`Pedido de preço detectado de ${phone}`)
+
+      // Verifica se Julia JÁ MANDOU os vídeos antes (procura link do 1º vídeo no histórico)
+      let jaMandouVideos = false
+      try {
+        const { db } = await import('../config/database')
+        const res = await db.query(
+          "SELECT COUNT(*) AS total FROM conversations WHERE phone=$1 AND role='assistant' AND content LIKE '%DX-LsXkVvT8%'",
+          [phone]
+        )
+        jaMandouVideos = Number(res.rows[0]?.total ?? 0) > 0
+      } catch (err) {
+        logger.error(`Erro ao checar se já enviou vídeos para ${phone}`, { error: (err as Error).message })
+      }
 
       const nomeExibicao = lead.name ?? 'tudo bem'
 
-      // 1. Cumprimento — só na primeira vez que Julia fala com o lead
-      if (!jaCumprimentou) {
-        const cumprimento = `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA 👊`
-        await sendTextMessage(phone, cumprimento)
-        await saveMessage(phone, 'assistant', cumprimento)
+      if (!jaMandouVideos) {
+        // 1ª VEZ pedindo valor: manda vídeos + fecho consultivo, SEM proposta, SEM follow-up
+        logger.info(`Primeiro pedido de valor de ${phone} — enviando vídeos sem proposta`)
+
+        // Cumprimento (só se ainda não cumprimentou)
+        let jaCumprimentouAgora = false
+        try {
+          const { db } = await import('../config/database')
+          const res = await db.query(
+            "SELECT COUNT(*) AS total FROM conversations WHERE phone=$1 AND role='assistant'",
+            [phone]
+          )
+          jaCumprimentouAgora = Number(res.rows[0]?.total ?? 0) > 0
+        } catch (err) {
+          logger.error(`Erro ao checar histórico de cumprimento para ${phone}`, { error: (err as Error).message })
+        }
+
+        if (!jaCumprimentouAgora) {
+          const cumprimento = `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA 👊`
+          await sendTextMessage(phone, cumprimento)
+          await saveMessage(phone, 'assistant', cumprimento)
+          await new Promise(resolve => setTimeout(resolve, 1500))
+        }
+
+        // Anúncio em 2 mensagens com pausa curta
+        const anuncio1 = 'A Miura X433 faz 4 funções, te mando um vídeo curto de cada uma 👊'
+        await sendTextMessage(phone, anuncio1)
+        await saveMessage(phone, 'assistant', anuncio1)
         await new Promise(resolve => setTimeout(resolve, 1500))
+
+        const anuncio2 = 'São vídeos do YouTube, não baixam nada no seu celular.'
+        await sendTextMessage(phone, anuncio2)
+        await saveMessage(phone, 'assistant', anuncio2)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        // 4 vídeos agrupados
+        const videos = '🔧 Fazendo no próprio carro: https://youtube.com/shorts/DX-LsXkVvT8\n\n⚙️ Retífica na máquina: https://youtube.com/shorts/Vbr1BZAfo-Q\n\n🛞 Tambor de freio: https://youtube.com/shorts/873I3ZQKkqc\n\n🔩 Volante de embreagem: https://youtube.com/shorts/EwXbLf1fZEU'
+        await sendTextMessage(phone, videos)
+        await saveMessage(phone, 'assistant', videos)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        // Fecho consultivo (convida o lead a dar o próximo passo)
+        const fecho = 'Qualquer dúvida ou pra falar de valores, é só me chamar 👊'
+        await sendTextMessage(phone, fecho)
+        await saveMessage(phone, 'assistant', fecho)
+
+        return
       }
 
-      // 2. Anúncio dos vídeos
-      const anuncio = 'Te mando os vídeos da Miura trabalhando primeiro 👊'
-      await sendTextMessage(phone, anuncio)
-      await saveMessage(phone, 'assistant', anuncio)
+      // SEGUNDO pedido de valor (já tinha mandado vídeos antes): manda proposta + agenda follow-up
+      logger.info(`Lead ${phone} pedindo valor pós-vídeos — enviando proposta`)
 
-      await new Promise(resolve => setTimeout(resolve, 1500))
-
-      // 3. 4 vídeos agrupados em uma única mensagem
-      const videos = '🔧 Fazendo no próprio carro: https://youtube.com/shorts/DX-LsXkVvT8\n\n⚙️ Retífica na máquina: https://youtube.com/shorts/Vbr1BZAfo-Q\n\n🛞 Tambor de freio: https://youtube.com/shorts/873I3ZQKkqc\n\n🔩 Volante de embreagem: https://youtube.com/shorts/EwXbLf1fZEU'
-      await sendTextMessage(phone, videos)
-      await saveMessage(phone, 'assistant', videos)
-
-      // 4. Pausa de 30s para o lead ver os vídeos
-      logger.info(`Aguardando 30s antes de enviar proposta para ${phone}`)
-      await new Promise(resolve => setTimeout(resolve, 30000))
-
-      // 5. Proposta formatada completa
       const proposta = `📋 *Proposta Comercial – Retífica de Disco Miura X433*
 
 *Equipamento:* Retífica de Disco Miura X433
@@ -191,11 +230,6 @@ Em até 18x de R$ 1.869 (com as taxas da operadora)
 
 ━━━━━━━━━━━━━━━
 
-🧾 *Boleto*
-Entrada de R$ 10.000 + saldo em 12x de R$ 1.658
-
-━━━━━━━━━━━━━━━
-
 ✅ *Incluso*
 - Treinamento completo
 - Suporte técnico
@@ -211,21 +245,20 @@ Entrada de R$ 10.000 + saldo em 12x de R$ 1.658
 
       await new Promise(resolve => setTimeout(resolve, 1500))
 
-      // 6. Fecho
-      const fecho = 'Qualquer dúvida me chama 👊'
-      await sendTextMessage(phone, fecho)
-      await saveMessage(phone, 'assistant', fecho)
+      const fechoProposta = 'Qualquer dúvida me chama 👊'
+      await sendTextMessage(phone, fechoProposta)
+      await saveMessage(phone, 'assistant', fechoProposta)
 
-      // 7. Agenda follow-up para o dia seguinte às 9h
+      // Agenda follow-up automático para o dia seguinte (só agora, depois da proposta)
       try {
         const tomorrow = new Date()
         tomorrow.setDate(tomorrow.getDate() + 1)
         tomorrow.setHours(9, 0, 0, 0)
-        await updateLead(phone, {
-          followup_at: tomorrow,
-          followup_reason: 'proposta_enviada',
-          followup_count: 0,
-        })
+        const { db } = await import('../config/database')
+        await db.query(
+          'UPDATE leads SET followup_at=$1, followup_reason=$2, followup_count=0 WHERE phone=$3',
+          [tomorrow, 'proposta_enviada', phone]
+        )
         logger.info(`Follow-up de proposta agendado para ${phone}`, { at: tomorrow.toISOString() })
       } catch (err) {
         logger.error(`Erro ao agendar follow-up de proposta para ${phone}`, { error: (err as Error).message })
@@ -234,7 +267,7 @@ Entrada de R$ 10.000 + saldo em 12x de R$ 1.658
       return
     } catch (err) {
       logger.error(`Erro no fluxo controlado de preço para ${phone}`, { error: (err as Error).message })
-      // Falhou — continua fluxo normal (GPT responde)
+      // Se falhar, deixa o fluxo normal seguir
     }
   }
 
