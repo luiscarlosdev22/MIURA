@@ -1,9 +1,9 @@
-export type FollowupReason = 'socio' | 'pensar' | 'pagamento' | 'proposta_enviada' | null
+export type FollowupReason = 'socio' | 'pensar' | 'pagamento' | 'proposta_enviada' | 'enviar_proposta' | null
 
 export function detectFollowupReason(userMessage: string): FollowupReason {
   if (
-    /(vou|preciso|tenho que).{0,15}(falar|conversar|ver|consultar).{0,15}(sócio|socio|esposa|marido|pai|chefe|patrão|patrao|equipe|gerente|time|parceiro)/i.test(userMessage) ||
-    /com (meu|minha) (sócio|socio|esposa|marido|chefe|patrão|patrao|equipe|gerente|time|parceiro)/i.test(userMessage)
+    /(vou|preciso|tenho que).{0,15}(falar|conversar|ver|consultar).{0,15}(sócio|socio|esposa|marido|pai|chefe|patrão|patrao|equipe|gerente|time|parceiro|irmão|irmao|irmã|irma)/i.test(userMessage) ||
+    /com (meu|minha) (sócio|socio|esposa|marido|chefe|patrão|patrao|equipe|gerente|time|parceiro|irmão|irmao|irmã|irma)/i.test(userMessage)
   ) {
     return 'socio'
   }
@@ -13,6 +13,7 @@ export function detectFollowupReason(userMessage: string): FollowupReason {
     /preciso pensar/i.test(userMessage) ||
     /vou ver/i.test(userMessage) ||
     /vou decidir/i.test(userMessage) ||
+    /(vou|preciso) analisar/i.test(userMessage) ||
     /depois (te|eu).{0,10}(falo|aviso|retorno|respondo)/i.test(userMessage) ||
     /te (chamo|aviso|falo) depois/i.test(userMessage) ||
     /qualquer coisa (te|eu).{0,10}(chamo|falo|aviso|retorno)/i.test(userMessage)
@@ -23,7 +24,8 @@ export function detectFollowupReason(userMessage: string): FollowupReason {
   if (
     /vou ver.{0,15}(banco|financiamento|crédito|credito|emprestimo|empréstimo)/i.test(userMessage) ||
     /vou (simular|consultar).{0,15}(banco|financiamento)/i.test(userMessage) ||
-    /preciso (organizar|esperar|aguardar).{0,15}(dinheiro|caixa|grana|pagamento)/i.test(userMessage)
+    /preciso (organizar|esperar|aguardar).{0,15}(dinheiro|caixa|grana|pagamento)/i.test(userMessage) ||
+    /momento (da|do) (empresa|neg[óo]cio)/i.test(userMessage)
   ) {
     return 'pagamento'
   }

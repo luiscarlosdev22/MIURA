@@ -6,22 +6,17 @@ import { generateSDRResponse, classifyLead } from './ai'
 import { sendTextMessage, sendAudio } from './whatsapp'
 import { isTechnicalRequest } from './technicalRequestDetector'
 import { isPriceRequest } from './priceRequestDetector'
+import { isSimulationRequest } from './simulationRequestDetector'
+import { containsHandoffSignal, stripHandoffSignal } from './handoffSignal'
+import { PROPOSTA_MIURA, FECHO_PROPOSTA } from './proposta'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 
-const HANDOFF_REGEX = /\b(vou|passo|encaminho|encaminhar|repasso|repassar|passar|conectar|conectando|conecto)\b[^.!?]{0,80}\b(comercial|vendedor|equipe|nosso time|atendimento humano)\b/i
-
 const FOLLOWUP_MARKERS = [
-  'vou simular pra voce',
-  'vou simular para voce',
   'vou pedir pro comercial preparar',
   'vou encaminhar pra nossa equipe',
   'vou encaminhar para nossa equipe',
 ]
-
-function containsHandoffMarker(text: string): boolean {
-  return HANDOFF_REGEX.test(text)
-}
 
 function containsFollowupMarker(text: string): boolean {
   const lower = text.toLowerCase()
@@ -115,8 +110,31 @@ export async function processIncomingMessage(
   const recentMessages = history.map(m => m.content)
   const jaCumprimentou = history.some(m => m.role === 'assistant')
 
+  // Pedido de simulação (parcelas/entrada/financiamento/juros) → hand-off automático.
+  // Só dispara quando NÃO houve gatilho de acompanhamento (MATURANDO_DECISAO), para
+  // que "vou ver com o banco" / "momento da empresa" sigam para follow-up, e apenas
+  // PEDIDOS de condição ("faz em 6x?", "dá pra financiar?") gerem hand-off.
+  if (!followupReason && isSimulationRequest(textoFinal)) {
+    await saveMessage(phone, 'user', textoFinal)
+    logger.info(`Pedido de simulação detectado de ${phone} — hand-off automático`)
+    try {
+      const msg = 'Vou simular essa condição certinha e nosso comercial te retorna com os valores 👊'
+      await sendTextMessage(phone, msg)
+      await saveMessage(phone, 'assistant', msg)
+      await updateLead(phone, { status: 'QUENTE' })
+      if (!lead.seller_notified && env.seller.whatsapp) {
+        await notifySeller(phone, lead)
+        await updateLead(phone, { seller_notified: true })
+      }
+      return
+    } catch (err) {
+      logger.error(`Erro no hand-off de simulação para ${phone}`, { error: (err as Error).message })
+      // Falhou — segue o fluxo normal (GPT responde)
+    }
+  }
+
   // Pedido técnico → envia áudio pré-gravado, sem chamar GPT
-  if (isTechnicalRequest(textoFinal)) {
+  if (isTechnicalRequest(textoFinal, recentMessages)) {
     await saveMessage(phone, 'user', textoFinal)
     try {
       logger.info(`Pedido técnico detectado de ${phone}, enviando áudio`)
@@ -205,49 +223,32 @@ export async function processIncomingMessage(
         await sendTextMessage(phone, fecho)
         await saveMessage(phone, 'assistant', fecho)
 
+        // Agenda envio automático da proposta caso o lead não responda em 1h
+        try {
+          const emUmaHora = new Date(Date.now() + 60 * 60 * 1000)
+          await updateLead(phone, {
+            followup_at: emUmaHora,
+            followup_reason: 'enviar_proposta',
+            followup_count: 0,
+          })
+          logger.info(`Follow-up enviar_proposta agendado para ${phone}`, { at: emUmaHora.toISOString() })
+        } catch (err) {
+          logger.error(`Erro ao agendar follow-up enviar_proposta para ${phone}`, { error: (err as Error).message })
+        }
+
         return
       }
 
       // SEGUNDO pedido de valor (já tinha mandado vídeos antes): manda proposta + agenda follow-up
       logger.info(`Lead ${phone} pedindo valor pós-vídeos — enviando proposta`)
 
-      const proposta = `📋 *Proposta Comercial – Retífica de Disco Miura X433*
-
-*Equipamento:* Retífica de Disco Miura X433
-
-━━━━━━━━━━━━━━━
-
-💰 *Condições de Pagamento*
-
-✅ *Valor à Vista*
-R$ 27.900,00
-🔥 Condição especial no PIX
-
-━━━━━━━━━━━━━━━
-
-💳 *Cartão de Crédito*
-Em até 18x de R$ 1.869 (com as taxas da operadora)
-
-━━━━━━━━━━━━━━━
-
-✅ *Incluso*
-- Treinamento completo
-- Suporte técnico
-- Garantia de 3 anos
-- Equipamento profissional linha Miura
-
-━━━━━━━━━━━━━━━
-
-🚀 Somos referência no Brasil em retífica de disco automotiva.`
-
-      await sendTextMessage(phone, proposta)
-      await saveMessage(phone, 'assistant', proposta)
+      await sendTextMessage(phone, PROPOSTA_MIURA)
+      await saveMessage(phone, 'assistant', PROPOSTA_MIURA)
 
       await new Promise(resolve => setTimeout(resolve, 1500))
 
-      const fechoProposta = 'Qualquer dúvida me chama 👊'
-      await sendTextMessage(phone, fechoProposta)
-      await saveMessage(phone, 'assistant', fechoProposta)
+      await sendTextMessage(phone, FECHO_PROPOSTA)
+      await saveMessage(phone, 'assistant', FECHO_PROPOSTA)
 
       // Agenda follow-up automático para o dia seguinte (só agora, depois da proposta)
       try {
@@ -275,7 +276,14 @@ Em até 18x de R$ 1.869 (com as taxas da operadora)
 
   await saveMessage(phone, 'user', textoFinal)
 
-  const parts = reply.split('[[SPLIT]]').map(p => p.trim()).filter(p => p.length > 0)
+  // Detecta o sinal de hand-off na resposta BRUTA (token [[HANDOFF]] ou frase legada)
+  // antes de remover o token.
+  const handoff = containsHandoffSignal(reply)
+
+  // Remove o token de controle [[HANDOFF]] — nunca pode chegar ao lead.
+  const cleanReply = stripHandoffSignal(reply)
+
+  const parts = cleanReply.split('[[SPLIT]]').map(p => p.trim()).filter(p => p.length > 0)
   const savedReply = parts.join('\n\n')
   await saveMessage(phone, 'assistant', savedReply)
 
@@ -287,7 +295,7 @@ Em até 18x de R$ 1.869 (com as taxas da operadora)
     await sendTextMessage(phone, parts[i])
   }
 
-  if (containsHandoffMarker(reply)) {
+  if (handoff) {
     logger.info(`Hand-off detectado na resposta da Julia para ${phone}`)
     await updateLead(phone, { status: 'QUENTE' })
     if (!lead.seller_notified && env.seller.whatsapp) {
@@ -297,7 +305,7 @@ Em até 18x de R$ 1.869 (com as taxas da operadora)
     return
   }
 
-  if (containsFollowupMarker(reply)) {
+  if (containsFollowupMarker(cleanReply)) {
     const followupAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
     logger.info(`Follow-up agendado para ${phone} em ${followupAt.toISOString()}`)
     await updateLead(phone, { awaiting_followup_at: followupAt })

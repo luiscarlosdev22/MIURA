@@ -25,7 +25,7 @@ const SPRING_KEYWORDS = [
   /armário/i,
 ]
 
-function mentionsSpring(text: string): boolean {
+export function mentionsSpring(text: string): boolean {
   return SPRING_KEYWORDS.some((p) => p.test(text))
 }
 
