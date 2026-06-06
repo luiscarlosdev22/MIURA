@@ -38,6 +38,45 @@ check('D5 "ver com minha irmã" → socio', detectFollowupReason('preciso ver co
 check('D6 "momento da empresa" → pagamento', detectFollowupReason('é um momento da empresa difícil'), 'pagamento')
 check('D6 "momento do negócio" → pagamento', detectFollowupReason('não é o momento do negócio agora'), 'pagamento')
 
+console.log('\n=== Fase 0.1 — as 7 frases da XIIINA são MATURANDO_DECISAO (nunca null) ===')
+const frasesMaturando = [
+  'vou falar com meu irmão',
+  'vou falar com meu sócio',
+  'vou conversar com a esposa',
+  'vou analisar',
+  'vou pensar',
+  'preciso ver com alguém',
+  'vou verificar',
+]
+for (const frase of frasesMaturando) {
+  const r = detectFollowupReason(frase)
+  check(`MATURANDO "${frase}" → não-null (${r})`, r !== null, true)
+}
+// Novos gatilhos específicos da Fase 0.1
+check('0.1 "ver com alguém" → socio', detectFollowupReason('preciso ver com alguém antes'), 'socio')
+check('0.1 "preciso verificar" → pensar', detectFollowupReason('preciso verificar uma coisa'), 'pensar')
+check('0.1 "vou verificar" → pensar', detectFollowupReason('vou verificar e te falo'), 'pensar')
+check('0.1 "vou conferir" → pensar', detectFollowupReason('vou conferir aqui'), 'pensar')
+
+console.log('\n=== Fase 0.1 — GATE: hand-off é suprimido quando há followupReason ===')
+// Simula a regra do leadProcessor: const handoff = containsHandoffSignal(reply) && !followupReason
+function handoffEfetivo(replyDoGpt: string, msgDoLead: string): boolean {
+  const followupReason = detectFollowupReason(msgDoLead)
+  return containsHandoffSignal(replyDoGpt) && !followupReason
+}
+// Mesmo que o GPT emita [[HANDOFF]], MATURANDO_DECISAO bloqueia a promoção:
+check('gate: "irmão" + GPT com [[HANDOFF]] → NÃO promove',
+  handoffEfetivo('Vou te conectar com nosso comercial 👊 [[HANDOFF]]', 'vou falar com meu irmão'), false)
+check('gate: "vou pensar" + GPT com [[HANDOFF]] → NÃO promove',
+  handoffEfetivo('vou passar pro comercial [[HANDOFF]]', 'vou pensar'), false)
+check('gate: "ver com alguém" + paráfrase de hand-off → NÃO promove',
+  handoffEfetivo('vou repassar pro nosso comercial', 'preciso ver com alguém'), false)
+// Hand-off legítimo (sem followupReason) CONTINUA promovendo:
+check('gate: "quero falar com humano" + [[HANDOFF]] → PROMOVE',
+  handoffEfetivo('Já te conecto com o comercial 👊 [[HANDOFF]]', 'quero falar com um humano'), true)
+check('gate: aceitou comprar + [[HANDOFF]] → PROMOVE',
+  handoffEfetivo('Perfeito! Vou passar pro nosso comercial [[HANDOFF]]', 'fechado, quero comprar'), true)
+
 console.log('\n=== Regressão — gatilhos originais preservados ===')
 check('reg socio "falar com meu sócio"', detectFollowupReason('vou falar com meu sócio'), 'socio')
 check('reg pensar "vou pensar"', detectFollowupReason('vou pensar e te falo'), 'pensar')

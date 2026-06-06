@@ -3,7 +3,8 @@ export type FollowupReason = 'socio' | 'pensar' | 'pagamento' | 'proposta_enviad
 export function detectFollowupReason(userMessage: string): FollowupReason {
   if (
     /(vou|preciso|tenho que).{0,15}(falar|conversar|ver|consultar).{0,15}(sócio|socio|esposa|marido|pai|chefe|patrão|patrao|equipe|gerente|time|parceiro|irmão|irmao|irmã|irma)/i.test(userMessage) ||
-    /com (meu|minha) (sócio|socio|esposa|marido|chefe|patrão|patrao|equipe|gerente|time|parceiro|irmão|irmao|irmã|irma)/i.test(userMessage)
+    /com (meu|minha) (sócio|socio|esposa|marido|chefe|patrão|patrao|equipe|gerente|time|parceiro|irmão|irmao|irmã|irma)/i.test(userMessage) ||
+    /(ver|falar|conversar|consultar) com algu[eé]m/i.test(userMessage)
   ) {
     return 'socio'
   }
@@ -14,6 +15,7 @@ export function detectFollowupReason(userMessage: string): FollowupReason {
     /vou ver/i.test(userMessage) ||
     /vou decidir/i.test(userMessage) ||
     /(vou|preciso) analisar/i.test(userMessage) ||
+    /(vou|preciso) (verificar|conferir)/i.test(userMessage) ||
     /depois (te|eu).{0,10}(falo|aviso|retorno|respondo)/i.test(userMessage) ||
     /te (chamo|aviso|falo) depois/i.test(userMessage) ||
     /qualquer coisa (te|eu).{0,10}(chamo|falo|aviso|retorno)/i.test(userMessage)

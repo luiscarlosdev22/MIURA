@@ -278,7 +278,12 @@ export async function processIncomingMessage(
 
   // Detecta o sinal de hand-off na resposta BRUTA (token [[HANDOFF]] ou frase legada)
   // antes de remover o token.
-  const handoff = containsHandoffSignal(reply)
+  //
+  // MATURANDO_DECISAO é estado PRIORITÁRIO: se este turno foi classificado como
+  // acompanhamento (sócio/irmão/esposa/decisor, "vou analisar/pensar/verificar/ver
+  // com alguém"), o lead NUNCA é promovido a QUENTE — mesmo que o GPT emita um sinal
+  // de hand-off. O follow-up agendado é o desfecho autoritativo do turno.
+  const handoff = containsHandoffSignal(reply) && !followupReason
 
   // Remove o token de controle [[HANDOFF]] — nunca pode chegar ao lead.
   const cleanReply = stripHandoffSignal(reply)
