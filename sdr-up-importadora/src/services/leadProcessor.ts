@@ -3,12 +3,18 @@ import { detectFollowupReason } from './followupDetector'
 import { findOrCreateLead, updateLead, Lead } from '../models/lead'
 import { saveMessage, getHistory } from '../models/conversation'
 import { generateSDRResponse, classifyLead } from './ai'
-import { sendTextMessage, sendAudio } from './whatsapp'
+import { sendTextMessage } from './whatsapp'
 import { isTechnicalRequest } from './technicalRequestDetector'
 import { isPriceRequest } from './priceRequestDetector'
 import { isSimulationRequest } from './simulationRequestDetector'
 import { containsHandoffSignal, stripHandoffSignal } from './handoffSignal'
 import { PROPOSTA_MIURA, FECHO_PROPOSTA } from './proposta'
+import {
+  buildDiscoveryPresentation,
+  DISCOVERY_QUESTION,
+  VIDEOS_MIURA,
+  detectUseType,
+} from './discovery'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 
@@ -133,27 +139,96 @@ export async function processIncomingMessage(
     }
   }
 
-  // Pedido técnico → envia áudio pré-gravado, sem chamar GPT
-  if (isTechnicalRequest(textoFinal, recentMessages)) {
-    await saveMessage(phone, 'user', textoFinal)
-    try {
-      logger.info(`Pedido técnico detectado de ${phone}, enviando áudio`)
-      await sendAudio(phone, env.audio.pitchTecnico)
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      const followupText = 'Aí está rapidinho 👊 Te mando também a máquina trabalhando:'
-      await sendTextMessage(phone, followupText)
+  // --- FASE 1.1 — Etapa de descoberta ANTES dos vídeos ---
+  // Objetivo: não despejar vídeos/proposta no primeiro pedido de informação.
+  //   (A) Lead pede informação → Julia apresenta a Miura brevemente (4 funções +
+  //       público-alvo + benefício) e pergunta o tipo de operação. NÃO envia vídeos.
+  //   (B) Lead responde → SÓ AGORA envia os vídeos e agenda a proposta automática (1h).
+  // Só roda quando NÃO há maturação, simulação nem pedido de preço — esses seguem
+  // seus fluxos originais (follow-up, proposta, hand-off e maturação não são alterados).
+  if (
+    !followupReason &&
+    !isSimulationRequest(textoFinal) &&
+    !isPriceRequest(textoFinal, recentMessages)
+  ) {
+    const videosJaEnviados = await jaEnviouVideos(phone)
 
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      await sendTextMessage(phone, '🔧 Fazendo no próprio carro: https://youtube.com/shorts/DX-LsXkVvT8\n\n⚙️ Retífica na máquina: https://youtube.com/shorts/Vbr1BZAfo-Q')
+    // (B) Descoberta já feita e vídeos ainda não enviados → este turno é a RESPOSTA.
+    if (lead.discovery_asked && !videosJaEnviados) {
+      await saveMessage(phone, 'user', textoFinal)
+      try {
+        logger.info(`Resposta de descoberta recebida de ${phone} — enviando vídeos`)
 
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      await sendTextMessage(phone, 'Ela também faz tambor de freio e volante de embreagem. Quer que eu te mande esses também?')
+        const useType = detectUseType(textoFinal)
+        if (useType) {
+          await updateLead(phone, { use_type: useType, has_shop: true })
+        }
 
-      await saveMessage(phone, 'assistant', '[ÁUDIO_PITCH + VÍDEOS ENVIADOS] ' + followupText)
-      return
-    } catch (err) {
-      logger.error(`Erro ao enviar áudio técnico para ${phone}`, { error: (err as Error).message })
-      // Falhou — continua fluxo normal (Julia responde por texto)
+        const intro = 'Show 👊 te mando uns vídeos curtos da Miura trabalhando:'
+        await sendTextMessage(phone, intro)
+        await saveMessage(phone, 'assistant', intro)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        await sendTextMessage(phone, VIDEOS_MIURA)
+        await saveMessage(phone, 'assistant', VIDEOS_MIURA)
+        await new Promise(resolve => setTimeout(resolve, 1500))
+
+        const fecho = 'Qualquer dúvida ou pra falar de valores, é só me chamar 👊'
+        await sendTextMessage(phone, fecho)
+        await saveMessage(phone, 'assistant', fecho)
+
+        // Agenda envio automático da proposta caso o lead não responda em 1h
+        // (mesma mecânica do fluxo de preço — follow-up 'enviar_proposta').
+        try {
+          const emUmaHora = new Date(Date.now() + 60 * 60 * 1000)
+          await updateLead(phone, {
+            followup_at: emUmaHora,
+            followup_reason: 'enviar_proposta',
+            followup_count: 0,
+          })
+          logger.info(`Follow-up enviar_proposta agendado para ${phone}`, { at: emUmaHora.toISOString() })
+        } catch (err) {
+          logger.error(`Erro ao agendar follow-up enviar_proposta para ${phone}`, { error: (err as Error).message })
+        }
+        return
+      } catch (err) {
+        logger.error(`Erro ao enviar vídeos pós-descoberta para ${phone}`, { error: (err as Error).message })
+        // Falhou — segue o fluxo normal (GPT responde)
+      }
+    }
+
+    // (A) Primeiro pedido de informação (técnico) e descoberta ainda não iniciada →
+    //     apresenta a Miura + faz a pergunta de descoberta. NÃO envia vídeos.
+    if (isTechnicalRequest(textoFinal, recentMessages) && !lead.discovery_asked && !videosJaEnviados) {
+      await saveMessage(phone, 'user', textoFinal)
+      try {
+        logger.info(`Pedido de informação detectado de ${phone} — iniciando descoberta (sem vídeos)`)
+
+        if (!jaCumprimentou) {
+          const nomeExibicao = lead.name ?? ''
+          const cumprimento = nomeExibicao
+            ? `Olá ${nomeExibicao}! Aqui é a Julia da XIIINA.COM 👊`
+            : 'Olá! Aqui é a Julia da XIIINA.COM 👊'
+          await sendTextMessage(phone, cumprimento)
+          await saveMessage(phone, 'assistant', cumprimento)
+          await new Promise(resolve => setTimeout(resolve, 1500))
+        }
+
+        for (const parte of buildDiscoveryPresentation()) {
+          await sendTextMessage(phone, parte)
+          await saveMessage(phone, 'assistant', parte)
+          await new Promise(resolve => setTimeout(resolve, 1500))
+        }
+
+        await sendTextMessage(phone, DISCOVERY_QUESTION)
+        await saveMessage(phone, 'assistant', DISCOVERY_QUESTION)
+
+        await updateLead(phone, { discovery_asked: true })
+        return
+      } catch (err) {
+        logger.error(`Erro na etapa de descoberta para ${phone}`, { error: (err as Error).message })
+        // Falhou — segue o fluxo normal (GPT responde)
+      }
     }
   }
 
@@ -326,6 +401,22 @@ export async function processIncomingMessage(
     if (classification !== 'QUENTE') {
       await updateLead(phone, { status: classification })
     }
+  }
+}
+
+// Verifica no histórico se os vídeos da Miura já foram enviados ao lead
+// (procura o link do 1º vídeo nas mensagens da assistente).
+async function jaEnviouVideos(phone: string): Promise<boolean> {
+  try {
+    const { db } = await import('../config/database')
+    const res = await db.query(
+      "SELECT COUNT(*) AS total FROM conversations WHERE phone=$1 AND role='assistant' AND content LIKE '%DX-LsXkVvT8%'",
+      [phone]
+    )
+    return Number(res.rows[0]?.total ?? 0) > 0
+  } catch (err) {
+    logger.error(`Erro ao checar se já enviou vídeos para ${phone}`, { error: (err as Error).message })
+    return false
   }
 }
 

@@ -22,6 +22,7 @@ export interface Lead {
   followup_reason: 'socio' | 'pensar' | 'pagamento' | 'proposta_enviada' | 'enviar_proposta' | null
   followup_count: number
   followup_sent_at: Date | null
+  discovery_asked: boolean
   created_at: Date
   updated_at: Date
 }
@@ -68,6 +69,12 @@ export async function runMigrations(): Promise<void> {
       ADD COLUMN IF NOT EXISTS followup_reason TEXT,
       ADD COLUMN IF NOT EXISTS followup_count INTEGER DEFAULT 0,
       ADD COLUMN IF NOT EXISTS followup_sent_at TIMESTAMPTZ
+  `)
+  // FASE 1.1 — marca que a etapa de descoberta (apresentação + pergunta) já foi feita,
+  // para que os vídeos sejam enviados apenas após a resposta do lead.
+  await query(`
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS discovery_asked BOOLEAN NOT NULL DEFAULT FALSE
   `)
   logger.info('Migrations executadas com sucesso')
 }
