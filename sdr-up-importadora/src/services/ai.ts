@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import { env } from '../config/env'
 import { logger } from '../config/logger'
 import { SDR_SYSTEM_PROMPT } from '../prompts/sdr'
+import { MIURA_KNOWLEDGE_BLOCK } from '../prompts/miuraKnowledge'
 
 const openai = new OpenAI({ apiKey: env.openai.apiKey })
 
@@ -20,7 +21,7 @@ export async function generateSDRResponse(
     : `Contexto: o nome do lead ainda não é conhecido. Pergunte naturalmente.`
 
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    { role: 'system', content: `${contextNote}\n\n${SDR_SYSTEM_PROMPT}` },
+    { role: 'system', content: `${contextNote}\n\n${SDR_SYSTEM_PROMPT}\n\n${MIURA_KNOWLEDGE_BLOCK}` },
     ...history.slice(-10),
     { role: 'user', content: newMessage },
   ]

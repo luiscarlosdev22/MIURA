@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import { env } from '../config/env'
 import { logger } from '../config/logger'
-import { processIncomingMessage } from '../services/leadProcessor'
+import { enqueueIncomingMessage } from '../services/messageBuffer'
 import { markAsRead } from '../services/whatsapp'
 import { downloadAudioFromEvolution } from '../services/mediaDownloader'
 import { transcribeAudio } from '../services/transcribeAudio'
@@ -52,9 +52,7 @@ export async function receiveWebhook(req: Request, res: Response): Promise<void>
 
   await markAsRead(messageId)
 
-  processIncomingMessage(phone, text, contactName ?? undefined).catch(err => {
-    logger.error(`Erro ao processar mensagem de ${phone}`, { error: err.message })
-  })
+  enqueueIncomingMessage(phone, text, contactName ?? undefined)
 }
 
 export async function receiveEvolutionWebhook(req: Request, res: Response): Promise<void> {
@@ -90,9 +88,7 @@ export async function receiveEvolutionWebhook(req: Request, res: Response): Prom
 
   const nonAudioMedia = ['imageMessage', 'videoMessage', 'documentMessage']
   if (nonAudioMedia.includes(data.messageType)) {
-    processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName).catch(err => {
-      logger.error(`Erro ao processar midia Evolution de ${phone}`, { error: err.message })
-    })
+    enqueueIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
     return
   }
 
@@ -103,22 +99,22 @@ export async function receiveEvolutionWebhook(req: Request, res: Response): Prom
 
         if (durationSeconds > 60) {
           logger.info(`Audio longo (${durationSeconds}s) de ${phone} — passando pro humano`)
-          await processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
+          enqueueIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
           return
         }
 
         const transcription = await transcribeAudio(filePath)
 
         if (!transcription) {
-          await processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
+          enqueueIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
           return
         }
 
         logger.info(`Audio transcrito de ${phone}`, { preview: transcription.slice(0, 60) })
-        await processIncomingMessage(phone, transcription, pushName)
+        enqueueIncomingMessage(phone, transcription, pushName)
       } catch (err) {
         logger.error(`Erro ao processar audio de ${phone}`, { error: (err as Error).message })
-        processIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName).catch(() => {})
+        enqueueIncomingMessage(phone, '[MIDIA_NAO_TEXTO]', pushName)
       }
     }
 
@@ -139,9 +135,7 @@ export async function receiveEvolutionWebhook(req: Request, res: Response): Prom
     preview: text.slice(0, 60),
   })
 
-  processIncomingMessage(phone, text, pushName).catch(err => {
-    logger.error(`Erro ao processar mensagem Evolution de ${phone}`, { error: err.message })
-  })
+  enqueueIncomingMessage(phone, text, pushName)
 }
 
 export function healthCheck(_req: Request, res: Response): void {

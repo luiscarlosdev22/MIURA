@@ -96,6 +96,27 @@ export async function sendAudio(phone: string, filepath: string): Promise<void> 
   }
 }
 
+export async function sendImage(to: string, filepath: string, caption = ''): Promise<void> {
+  if (env.whatsappProvider !== 'evolution') {
+    logger.warn('sendImage só implementado para Evolution hoje')
+    return
+  }
+  try {
+    const fileBuffer = await readFile(filepath)
+    const base64 = fileBuffer.toString('base64')
+    await axios.post(
+      `${env.evolution.url}/message/sendMedia/${env.evolution.instance}`,
+      { number: to, mediatype: 'image', media: base64, caption, fileName: 'proposta-miura.png' },
+      { headers: { apikey: env.evolution.apiKey, 'Content-Type': 'application/json' }, timeout: 30_000 }
+    )
+    logger.info(`Imagem enviada para ${to} via Evolution`)
+  } catch (err) {
+    const error = err as Error & { response?: { data?: unknown } }
+    logger.error(`Erro ao enviar imagem para ${to}`, { message: error.message, response: (error as any).response?.data })
+    throw err
+  }
+}
+
 export async function markAsRead(messageId: string): Promise<void> {
   if (env.whatsappProvider !== 'meta') return
   try {

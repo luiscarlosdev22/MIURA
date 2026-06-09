@@ -1,9 +1,9 @@
 import { db } from '../config/database'
 import { logger } from '../config/logger'
-import { sendTextMessage } from './whatsapp'
+import { sendTextMessage, sendImage } from './whatsapp'
 import { saveMessage } from '../models/conversation'
 import { followupMessage, FollowupReason } from './followupDetector'
-import { PROPOSTA_MIURA, FECHO_PROPOSTA } from './proposta'
+import { PROPOSTA_MIURA, FECHO_PROPOSTA, PROPOSTA_IMAGE_PATH, PROPOSTA_CAPTION } from './proposta'
 
 interface FollowupLead {
   phone: string
@@ -55,11 +55,8 @@ export async function runFollowupJob(): Promise<void> {
       // Caso especial: enviar proposta automaticamente (1h após vídeos sem resposta)
       if (lead.followup_reason === 'enviar_proposta') {
         try {
-          await sendTextMessage(lead.phone, PROPOSTA_MIURA)
+          await sendImage(lead.phone, PROPOSTA_IMAGE_PATH, PROPOSTA_CAPTION)
           await saveMessage(lead.phone, 'assistant', PROPOSTA_MIURA)
-          await new Promise(resolve => setTimeout(resolve, 1500))
-          await sendTextMessage(lead.phone, FECHO_PROPOSTA)
-          await saveMessage(lead.phone, 'assistant', FECHO_PROPOSTA)
 
           // Agenda follow-up de proposta para o dia seguinte às 9h
           const tomorrow = new Date()

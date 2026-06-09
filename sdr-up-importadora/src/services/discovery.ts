@@ -33,7 +33,7 @@ export function buildDiscoveryPresentation(): string[] {
       '🔧 Retífica de disco no próprio veículo\n' +
       '⚙️ Retífica de disco fora do veículo (na máquina)\n' +
       '🛞 Retífica de tambor de freio\n' +
-      '🔩 Retífica de volante de embreagem',
+      '🔩 Retífica de volante de embreagem (em alguns modelos)',
     // benefício principal
     'Muitas oficinas que já adquiriram a Miura deixaram de terceirizar seus serviços de retífica, ' +
       'ganhando mais agilidade na entrega, mais qualidade nos serviços, aumentando o faturamento ' +

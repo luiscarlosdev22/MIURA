@@ -1,3 +1,8 @@
+import path from 'path'
+
+export const PROPOSTA_IMAGE_PATH = path.resolve(__dirname, '../../assets/proposta-miura.png')
+export const PROPOSTA_CAPTION = '🔥 Condição especial no PIX e até 18x no cartão — confere a proposta 👊'
+
 export const PROPOSTA_MIURA = `📋 *Proposta Comercial – Retífica de Disco Miura X433*
 
 *Equipamento:* Retífica de Disco Miura X433

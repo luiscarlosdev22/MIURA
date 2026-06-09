@@ -3,12 +3,13 @@ import { detectFollowupReason } from './followupDetector'
 import { findOrCreateLead, updateLead, Lead } from '../models/lead'
 import { saveMessage, getHistory } from '../models/conversation'
 import { generateSDRResponse, classifyLead } from './ai'
-import { sendTextMessage } from './whatsapp'
+import { sendTextMessage, sendImage } from './whatsapp'
 import { isTechnicalRequest } from './technicalRequestDetector'
-import { isPriceRequest } from './priceRequestDetector'
+import { isPriceRequest, mentionsSpring } from './priceRequestDetector'
 import { isSimulationRequest } from './simulationRequestDetector'
+import { isDiscountRequest } from './discountRequestDetector'
 import { containsHandoffSignal, stripHandoffSignal } from './handoffSignal'
-import { PROPOSTA_MIURA, FECHO_PROPOSTA } from './proposta'
+import { PROPOSTA_MIURA, FECHO_PROPOSTA, PROPOSTA_IMAGE_PATH, PROPOSTA_CAPTION } from './proposta'
 import {
   buildDiscoveryPresentation,
   DISCOVERY_QUESTION,
@@ -139,6 +140,28 @@ export async function processIncomingMessage(
     }
   }
 
+  // Pedido de desconto / negociação → hand-off automático.
+  // Roda antes do isPriceRequest para interceptar antes de reenviar proposta.
+  if (!followupReason && isDiscountRequest(textoFinal)) {
+    await saveMessage(phone, 'user', textoFinal)
+    logger.info(`Pedido de desconto detectado de ${phone} — hand-off automático`)
+    try {
+      const nome = lead.name ?? 'tudo bem'
+      const msg = `Sobre valores e condições eu não tenho autorização pra negociar, ${nome}. Quem decide isso é nosso comercial — vou já te conectar com ele pra avaliar isso direto com você 👊`
+      await sendTextMessage(phone, msg)
+      await saveMessage(phone, 'assistant', msg)
+      await updateLead(phone, { status: 'QUENTE' })
+      if (!lead.seller_notified && env.seller.whatsapp) {
+        await notifySeller(phone, lead)
+        await updateLead(phone, { seller_notified: true })
+      }
+      return
+    } catch (err) {
+      logger.error(`Erro no hand-off de desconto para ${phone}`, { error: (err as Error).message })
+      // Falhou — segue o fluxo normal (GPT responde)
+    }
+  }
+
   // --- FASE 1.1 — Etapa de descoberta ANTES dos vídeos ---
   // Objetivo: não despejar vídeos/proposta no primeiro pedido de informação.
   //   (A) Lead pede informação → Julia apresenta a Miura brevemente (4 funções +
@@ -199,7 +222,7 @@ export async function processIncomingMessage(
 
     // (A) Primeiro pedido de informação (técnico) e descoberta ainda não iniciada →
     //     apresenta a Miura + faz a pergunta de descoberta. NÃO envia vídeos.
-    if (isTechnicalRequest(textoFinal, recentMessages) && !lead.discovery_asked && !videosJaEnviados) {
+    if (!mentionsSpring(textoFinal) && !lead.discovery_asked && !videosJaEnviados) {
       await saveMessage(phone, 'user', textoFinal)
       try {
         logger.info(`Pedido de informação detectado de ${phone} — iniciando descoberta (sem vídeos)`)
@@ -317,13 +340,8 @@ export async function processIncomingMessage(
       // SEGUNDO pedido de valor (já tinha mandado vídeos antes): manda proposta + agenda follow-up
       logger.info(`Lead ${phone} pedindo valor pós-vídeos — enviando proposta`)
 
-      await sendTextMessage(phone, PROPOSTA_MIURA)
+      await sendImage(phone, PROPOSTA_IMAGE_PATH, PROPOSTA_CAPTION)
       await saveMessage(phone, 'assistant', PROPOSTA_MIURA)
-
-      await new Promise(resolve => setTimeout(resolve, 1500))
-
-      await sendTextMessage(phone, FECHO_PROPOSTA)
-      await saveMessage(phone, 'assistant', FECHO_PROPOSTA)
 
       // Agenda follow-up automático para o dia seguinte (só agora, depois da proposta)
       try {
